@@ -1,0 +1,143 @@
+#include <Wire.h>
+#include <math.h>
+
+#define SPL06_ADDR 0x76
+
+int32_t rawPressure, rawTempExternal;
+int32_t c0, c1;
+int32_t c00, c10, c01, c11, c20, c21, c30;
+
+#define K_T 253952.0
+#define K_P 253952.0
+#define SEA_LEVEL_PRESSURE 1013.25  // hPa
+
+float baseAltitude = NAN;
+
+void writeReg(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(SPL06_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
+}
+
+void readRegs(uint8_t reg, uint8_t* buf, uint8_t len) {
+  Wire.beginTransmission(SPL06_ADDR);
+  Wire.write(reg);
+  Wire.endTransmission();
+  Wire.requestFrom(SPL06_ADDR, len);
+  for (uint8_t i = 0; i < len; i++) buf[i] = Wire.read();
+}
+
+int32_t signExtend(int32_t val, uint8_t bits) {
+  int32_t mask = 1 << (bits - 1);
+  return (val ^ mask) - mask;
+}
+
+int32_t conv24(uint8_t b2, uint8_t b1, uint8_t b0) {
+  int32_t val = ((uint32_t)b2 << 16) | ((uint32_t)b1 << 8) | b0;
+  return signExtend(val, 24);
+}
+
+void readCalibration() {
+  uint8_t buf[18];
+  readRegs(0x10, buf, 18);
+
+  c0 = signExtend((buf[0] << 4) | (buf[1] >> 4), 12);
+  c1 = signExtend(((buf[1] & 0x0F) << 8) | buf[2], 12);
+  c00 = signExtend(((int32_t)buf[3] << 12) | ((int32_t)buf[4] << 4) | (buf[5] >> 4), 20);
+  c10 = signExtend(((int32_t)(buf[5] & 0x0F) << 16) | ((int32_t)buf[6] << 8) | buf[7], 20);
+  c01 = signExtend((buf[8] << 8) | buf[9], 16);
+  c11 = signExtend((buf[10] << 8) | buf[11], 16);
+  c20 = signExtend((buf[12] << 8) | buf[13], 16);
+  c21 = signExtend((buf[14] << 8) | buf[15], 16);
+  c30 = signExtend((buf[16] << 8) | buf[17], 16);
+}
+
+int32_t readRawTempExternal() {
+  writeReg(0x07, 0xA4); // TMP_EXT=1, TMP_RATE=4, TMP_PRC=16x
+  delay(10);
+
+  uint8_t buf[3];
+  readRegs(0x03, buf, 3);
+  return conv24(buf[0], buf[1], buf[2]);
+}
+
+void readRawPressure() {
+  uint8_t buf[3];
+  readRegs(0x00, buf, 3);
+  rawPressure = conv24(buf[0], buf[1], buf[2]);
+}
+
+float calculateTemperature(int32_t raw) {
+  float traw_sc = raw / K_T;
+  return c0 * 0.5 + c1 * traw_sc;
+}
+
+float calculatePressure() {
+  float traw_sc = rawTempExternal / K_T;
+  float praw_sc = rawPressure / K_P;
+  return c00 +
+         praw_sc * (c10 + praw_sc * (c20 + praw_sc * c30)) +
+         traw_sc * c01 +
+         traw_sc * praw_sc * (c11 + praw_sc * c21);
+}
+
+float calculateAltitude(float pressure_hPa, float seaLevel_hPa) {
+  return 44330.0 * (1.0 - pow(pressure_hPa / seaLevel_hPa, 0.1903));
+}
+
+void setupSPL06() {
+  writeReg(0x0C, 0x89); // soft reset
+  delay(50);
+
+  writeReg(0x06, 0x44); // PRS_CFG: rate = 4 Hz, oversampling = x16
+  writeReg(0x07, 0xA4); // TMP_CFG: external, rate = 4 Hz, oversampling = x16
+  writeReg(0x09, 0x0C); // Enable result shift for pressure and temp
+  writeReg(0x08, 0x07); // Background mode: pressure + temperature
+
+  delay(100);
+  readCalibration();
+}
+
+void setup() {
+  Wire.setSDA(4);
+  Wire.setSCL(5);
+  Wire.begin();
+
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("SPL06-001: External Temp, Pressure, Relative Altitude");
+
+  setupSPL06();
+}
+
+void loop() {
+  rawTempExternal = readRawTempExternal();
+  readRawPressure();
+
+  float tempC = calculateTemperature(rawTempExternal);
+  float pressurePa = calculatePressure();
+  float pressurehPa = pressurePa / 100.0;
+  float altitude = calculateAltitude(pressurehPa, SEA_LEVEL_PRESSURE);
+
+  if (isnan(baseAltitude)) {
+    baseAltitude = altitude;
+  }
+
+  float relativeAltitude = altitude - baseAltitude;
+
+  Serial.print("Temp (External): ");
+  Serial.print(tempC, 2);
+  Serial.println(" °C");
+
+  Serial.print("Pressure: ");
+  Serial.print(pressurehPa, 2);
+  Serial.println(" hPa");
+
+  Serial.print("Altitude: ");
+  Serial.print(relativeAltitude, 2);
+  Serial.println(" m (relative)");
+
+  Serial.println("-----------------------------");
+  delay(1000);
+}
