@@ -1,0 +1,116 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <SPI.h>
+#include <SD.h>
+#include <TinyGPS++.h>
+
+Adafruit_BMP280 bmp; // BMP280 sensor on I2C
+TinyGPSPlus gps;     // GPS object
+
+// Define the chip select pin for your SD card module
+const int chipSelect = 13; // Example pin for CS on RP2040 SPI1 (SPI0)
+File myFile;
+unsigned long startTime;
+
+void setup() {
+Serial.begin(9600);
+while (!Serial) {
+; // Wait for serial port to connect. Needed for native USB port only
+}
+delay(100); // Give time for the Serial connection to establish
+
+Serial2.setRX(9); // Set RX pin for Serial2 to GPIO 9
+Serial2.setTX(8); // Set TX pin for Serial2 to GPIO 8
+Serial2.begin(9600); // Begin Serial2 at 9600 baud for GPS
+
+Serial.print("\nInitializing SD card...");
+
+// Manually configure the SPI1 pins
+gpio_set_function(12, GPIO_FUNC_SPI); // MISO
+gpio_set_function(15, GPIO_FUNC_SPI); // MOSI
+gpio_set_function(14, GPIO_FUNC_SPI); // SCK
+
+// Initialize SPI1
+SPI1.setRX(12);
+SPI1.setTX(15);
+SPI1.setSCK(14);
+SPI1.begin();
+
+// Initialize SD card
+if (!SD.begin(chipSelect, SPI1)) {
+Serial.println("SD Card initialization failed!");
+return;
+}
+
+myFile = SD.open("/data.txt", FILE_WRITE);
+if (myFile.size() > 0) {
+myFile.seek(myFile.size());
+myFile.println("...........................................................");
+}
+myFile.close();
+
+startTime = millis(); // Record start time
+
+Serial.println("SD card initialized.");
+
+if (!bmp.begin(0x76)) {
+Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+while (1);
+}
+
+// Default settings from datasheet
+bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+}
+
+void loop() {
+static float gpsAltitude = 0;
+static float hdop = 0;
+static float latitude = 0;
+static float longitude = 0;
+
+// Check for GPS data
+while (Serial2.available() > 0) {
+if (gps.encode(Serial2.read())) {
+if (gps.hdop.isValid()) {
+hdop = gps.hdop.hdop();
+}
+
+if (gps.location.isValid()) {
+latitude = gps.location.lat();
+longitude = gps.location.lng();
+}
+
+if (gps.altitude.isValid()) {
+gpsAltitude = gps.altitude.meters();
+}
+}
+}
+
+// Read altitude from BMP280
+float bmpAltitude = bmp.readAltitude(1013.25); // Adjust to your local sea level pressure in hPa
+
+// Get the current time in seconds
+float currentTime = (millis() - startTime) / 1000.0;
+
+// Create a CSV string with the required format
+String dataString = String(currentTime, 2) + ", " + String(bmpAltitude, 2) + ", " + String(gpsAltitude, 2) + ", " + String(longitude, 6) + ", " + String(latitude, 6) + ", " + String(hdop, 2);
+
+// Print the data to the serial monitor
+Serial.println(dataString);
+
+// Write the data to the SD card
+myFile = SD.open("/data.txt", FILE_WRITE);
+if (myFile) {
+myFile.println(dataString);
+myFile.close();
+} else {
+Serial.println("Failed to open file for writing");
+}
+
+delay(20); // Adjust delay as needed
+}
