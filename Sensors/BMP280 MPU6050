@@ -1,0 +1,58 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_MPU6050.h>
+
+Adafruit_BMP280 bmp;      // I2C for BMP280
+Adafruit_MPU6050 mpu;     // I2C for MPU6050
+
+void setup() {
+Serial.begin(115200);
+
+// Initialize BMP280
+if (!bmp.begin(0x76)) {
+Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+while (1);
+}
+
+// Initialize MPU6050
+if (!mpu.begin()) {
+Serial.println(F("Could not find a valid MPU6050 sensor, check wiring!"));
+while (1);
+}
+
+// Default settings from datasheet for BMP280
+bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+
+// Configure MPU6050
+mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+}
+
+void loop() {
+// Read temperature and pressure from BMP280
+Serial.print("Temperature = ");
+Serial.print(bmp.readTemperature());
+Serial.println(" *C");
+
+Serial.print("Pressure = ");
+Serial.print(bmp.readPressure() / 100.0F);
+Serial.println(" hPa");
+
+// Read z-axis acceleration from MPU6050
+sensors_event_t a, g, temp;
+mpu.getEvent(&a, &g, &temp);
+
+Serial.print("Z-Axis Acceleration = ");
+Serial.print(a.acceleration.z);
+Serial.println(" m/s²");
+
+Serial.println();
+
+delay(20);
+}
