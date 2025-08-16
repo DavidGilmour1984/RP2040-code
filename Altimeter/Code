@@ -1,0 +1,117 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Adafruit_NeoPixel.h>
+
+#define NEOPIXEL_PIN 16
+#define NUM_PIXELS 1
+Adafruit_NeoPixel pixel(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+
+Adafruit_BMP280 bmp; // I2C
+const int chipSelect = 13; // CS pin for SD card
+File myFile;
+unsigned long startTime;
+float baseAltitude = 0.0;
+bool baseAltitudeSet = false;
+unsigned long nextPrintTime = 0;
+int fileIndex = 0;
+char fileName[20];
+
+void setup() {
+Serial.begin(115200);
+pixel.begin();
+pixel.show();
+
+// Configure SPI1 pins
+gpio_set_function(15, GPIO_FUNC_SPI); // MOSI (TX)
+gpio_set_function(12, GPIO_FUNC_SPI); // MISO (RX)
+gpio_set_function(14, GPIO_FUNC_SPI); // SCK (Clock)
+
+SPI1.setTX(15);
+SPI1.setRX(12);
+SPI1.setSCK(14);
+SPI1.begin();
+
+// SD Card Initialization
+Serial.print("Initializing SD card...");
+if (!SD.begin(chipSelect, SPI1)) {
+Serial.println("SD Card initialization failed!");
+return;
+}
+Serial.println("SD card initialized.");
+
+// Find next available file index
+do {
+sprintf(fileName, "/data_%d.csv", fileIndex);
+fileIndex++;
+} while (SD.exists(fileName));
+
+// Open new CSV file
+myFile = SD.open(fileName, FILE_WRITE);
+if (myFile) {
+myFile.println("Time (s), Altitude (m)");
+myFile.close();
+}
+
+startTime = micros();
+nextPrintTime = startTime;
+
+// BMP280 Initialization
+if (!bmp.begin(0x76)) {
+Serial.println("Could not find a valid BMP280 sensor!");
+while (1);
+}
+
+bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+Adafruit_BMP280::SAMPLING_X16,
+Adafruit_BMP280::SAMPLING_X16,
+Adafruit_BMP280::FILTER_OFF,
+Adafruit_BMP280::STANDBY_MS_1); // Fastest available update rate
+}
+
+void loop() {
+unsigned long currentTime = micros();
+if (currentTime >= nextPrintTime) {
+nextPrintTime += 50000; // Schedule next log exactly 50ms later
+
+float altitude = bmp.readAltitude(1013.25);
+if (isnan(altitude) || altitude == INFINITY) {
+Serial.println("BMP280 read error! Check wiring.");
+return;
+}
+
+// Set base altitude on first valid reading
+if (!baseAltitudeSet) {
+baseAltitude = altitude;
+baseAltitudeSet = true;
+}
+
+// Adjust altitude to start at zero
+float relativeAltitude = altitude - baseAltitude;
+
+// Time in seconds with 2 decimal places
+float elapsedTime = (nextPrintTime - startTime) / 1000000.0;
+
+// Format data string
+String dataString = String(elapsedTime, 2) + ", " + String(relativeAltitude, 2);
+
+Serial.println(dataString);
+
+// Write to SD card
+myFile = SD.open(fileName, FILE_WRITE);
+if (myFile) {
+myFile.println(dataString);
+myFile.close();
+pixel.setPixelColor(0, pixel.Color(255, 0, 0)); // Green for success
+} else {
+Serial.println("Failed to open file for writing");
+pixel.setPixelColor(0, pixel.Color(0, 255, 0)); // Red for failure
+}
+
+pixel.show();
+pixel.setPixelColor(0, pixel.Color(0, 0, 0));
+pixel.show();
+}
+}
