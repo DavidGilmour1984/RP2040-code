@@ -1,0 +1,109 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// I2C address for the OLED display
+#define SCREEN_ADDRESS 0x3C
+
+// OLED display
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// Sensors
+Adafruit_BMP280 bmp;  // I2C for BMP280
+Adafruit_MPU6050 mpu; // I2C for MPU6050
+
+void setup() {
+Serial.begin(115200);
+
+// Initialize OLED display
+if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+Serial.println(F("SSD1306 allocation failed"));
+while (1);
+}
+display.clearDisplay();
+display.setTextSize(1); // Normal 1:1 pixel scale
+display.setTextColor(SSD1306_WHITE); // Draw white text
+display.setCursor(0, 0); // Start at top-left corner
+display.display();
+
+// Initialize BMP280 with the specified address
+if (!bmp.begin(0x76)) {
+Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+while (1);
+}
+
+// Initialize MPU6050
+if (!mpu.begin()) {
+Serial.println(F("Could not find a valid MPU6050 sensor, check wiring!"));
+while (1);
+}
+
+// Default settings from datasheet for BMP280
+bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+
+// Configure MPU6050
+mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+}
+
+void loop() {
+// Clear the display for new data
+display.clearDisplay();
+
+// Read temperature and pressure from BMP280
+float temperature = bmp.readTemperature();
+float pressure = bmp.readPressure() / 100.0F;
+float altitude = bmp.readAltitude(1013.25); // Assuming sea-level pressure is 1013.25 hPa
+
+// Read z-axis acceleration from MPU6050
+sensors_event_t a, g, temp;
+mpu.getEvent(&a, &g, &temp);
+float zAccel = a.acceleration.z;
+
+// Display data on the OLED
+display.setCursor(0, 0);
+display.print("Temp: ");
+display.print(temperature);
+display.println(" *C");
+
+display.print("Alt: ");
+display.print(altitude);
+display.println(" m");
+
+display.print("Z-Acc: ");
+display.print(zAccel);
+display.println(" m/s^2");
+
+display.display(); // Update the display with the new data
+
+// Print the data to Serial as well
+Serial.print("Temperature = ");
+Serial.print(temperature);
+Serial.println(" *C");
+
+Serial.print("Pressure = ");
+Serial.print(pressure);
+Serial.println(" hPa");
+
+Serial.print("Altitude = ");
+Serial.print(altitude);
+Serial.println(" m");
+
+Serial.print("Z-Axis Acceleration = ");
+Serial.print(zAccel);
+Serial.println(" m/s^2");
+
+Serial.println();
+
+delay(500); // Delay for readability
+}
